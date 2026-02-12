@@ -156,7 +156,7 @@ onMounted(load)
 </script>
 
 <template>
-  <h1>Weight Tracker</h1>
+  <h1>Time Series Data Tracker</h1>
 
   <form class="entry-form" @submit.prevent="save">
     <input type="date" v-model="date" required />
