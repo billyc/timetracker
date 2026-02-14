@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-weigh-me is a Vue 3 + TypeScript application built with Vite.
+timetracker is a Vue 3 + TypeScript application built with Vite.
 
 ## Commands
 

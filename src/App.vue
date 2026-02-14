@@ -16,21 +16,21 @@ import {
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip)
 
-interface WeightEntry {
+interface TimeTrackerEntry {
   date: string
   value: number
 }
 
-const STORAGE_KEY = 'weights'
+const STORAGE_KEY = 'timetracker'
 
-const entries = ref<WeightEntry[]>([])
+const entries = ref<TimeTrackerEntry[]>([])
 const date = ref(new Date().toISOString().slice(0, 10))
 const weight = ref<number | null>(null)
 
 function load() {
   const raw = localStorage.getItem(STORAGE_KEY)
   if (raw) {
-    entries.value = JSON.parse(raw) as WeightEntry[]
+    entries.value = JSON.parse(raw) as TimeTrackerEntry[]
   }
 }
 
@@ -66,7 +66,7 @@ const chartData = computed(() => ({
   labels: sortedForChart.value.map(e => e.date),
   datasets: [
     {
-      label: 'Weight',
+      label: 'TimeTracker',
       data: sortedForChart.value.map(e => e.value),
       borderColor: 'transparent',
       backgroundColor: '#22c55e',
@@ -135,16 +135,16 @@ function exportJSON() {
   const blob = new Blob([JSON.stringify(entries.value, null, 2)], {
     type: 'application/json',
   })
-  download(blob, 'weights.json')
+  download(blob, 'timetracker.json')
 }
 
 function exportCSV() {
-  const rows = ['date,weight', ...entries.value.map(e => `${e.date},${e.value}`)]
+  const rows = ['date,time', ...entries.value.map(e => `${e.date},${e.value}`)]
   const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
-  download(blob, 'weights.csv')
+  download(blob, 'timetracker.csv')
 }
 
-function removeEntry(entry: WeightEntry) {
+function removeEntry(entry: TimeTrackerEntry) {
   const idx = entries.value.indexOf(entry)
   if (idx !== -1) {
     entries.value.splice(idx, 1)
@@ -160,7 +160,7 @@ onMounted(load)
 
   <form class="entry-form" @submit.prevent="save">
     <input type="date" v-model="date" required />
-    <input type="number" v-model.number="weight" step="0.1" placeholder="Weight" required />
+    <input type="number" v-model.number="weight" step="0.1" placeholder="minutes" required />
     <button type="submit">Save</button>
   </form>
 
@@ -172,7 +172,7 @@ onMounted(load)
     <thead>
       <tr>
         <th>Date</th>
-        <th>Weight</th>
+        <th>Minutes</th>
       </tr>
     </thead>
     <tbody>
