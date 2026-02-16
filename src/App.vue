@@ -1,25 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Line } from 'vue-chartjs'
-import {
-  Chart as ChartJS,
-  type Chart,
-  type ChartOptions,
-  type Plugin,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-} from 'chart.js'
-
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip)
 
 interface TimeTrackerEntry {
   date: string
   value: number
   note?: string
+}
+
+interface HeatmapCell {
+  date: string
+  day: number
+  minutes: number
+  inMonth: boolean
 }
 
 const STORAGE_KEY = 'timetracker'
@@ -48,85 +40,92 @@ function save() {
   note.value = ''
 }
 
-const sortedForChart = computed(() =>
-  [...entries.value].sort((a, b) => a.date.localeCompare(b.date))
-)
-
 const sortedForTable = computed(() =>
   [...entries.value].sort((a, b) => b.date.localeCompare(a.date))
 )
 
-const trendData = computed(() => {
-  const values = sortedForChart.value.map(e => e.value)
-  const trend: number[] = []
-  for (let i = 0; i < values.length; i++) {
-    if (i === 0) {
-      trend.push(values[0]!)
-    } else {
-      trend.push(trend[i - 1]! + 0.12 * (values[i]! - trend[i - 1]!))
-    }
+const dailyTotals = computed(() => {
+  const map = new Map<string, number>()
+  for (const e of entries.value) {
+    map.set(e.date, (map.get(e.date) ?? 0) + e.value)
   }
-  return trend
+  return map
 })
 
-const chartData = computed(() => ({
-  labels: sortedForChart.value.map(e => e.date),
-  datasets: [
-    {
-      label: 'Time',
-      data: sortedForChart.value.map(e => e.value),
-      borderColor: 'transparent',
-      backgroundColor: '#22c55e',
-      pointRadius: 3,
-      showLine: false,
-    },
-    {
-      label: 'Trend',
-      data: trendData.value,
-      borderColor: '#3b82f6',
-      backgroundColor: '#3b82f6',
-      tension: 0.3,
-      pointRadius: 0,
-      borderWidth: 3,
-    },
-  ],
-}))
-
-const diffLinesPlugin: Plugin<'line'> = {
-  id: 'diffLines',
-  afterDatasetsDraw(chart: Chart<'line'>) {
-    const timeMeta = chart.getDatasetMeta(0)
-    const trendMeta = chart.getDatasetMeta(1)
-    if (!timeMeta || !trendMeta) return
-    const ctx = chart.ctx
-    ctx.save()
-    ctx.strokeStyle = 'rgba(249, 115, 22, 0.5)'
-    ctx.lineWidth = 1.5
-    for (let i = 0; i < timeMeta.data.length; i++) {
-      const tp = timeMeta.data[i]
-      const trp = trendMeta.data[i]
-      if (!tp || !trp) continue
-      ctx.beginPath()
-      ctx.moveTo(tp.x, tp.y)
-      ctx.lineTo(trp.x, trp.y)
-      ctx.stroke()
-    }
-    ctx.restore()
-  },
+interface HeatmapMonth {
+  key: string
+  label: string
+  weeks: HeatmapCell[][]
+  max: number
 }
 
-const chartOptions: ChartOptions<'line'> = {
-  responsive: true,
-  plugins: { title: { display: false } },
-  scales: {
-    x: { ticks: { color: '#aaa' }, grid: { display: false }, border: { color: '#555' } },
-    y: {
-      ticks: { color: '#aaa' },
-      grid: { display: false },
-      border: { color: '#555' },
-      grace: '15%',
-    },
-  },
+function weeksForMonth(year: number, month: number): HeatmapCell[][] {
+  const firstOfMonth = new Date(year, month - 1, 1)
+  const lastOfMonth = new Date(year, month, 0)
+
+  const start = new Date(firstOfMonth)
+  start.setDate(start.getDate() - start.getDay())
+
+  const end = new Date(lastOfMonth)
+  if (end.getDay() < 6) end.setDate(end.getDate() + (6 - end.getDay()))
+
+  const weeks: HeatmapCell[][] = []
+  const cursor = new Date(start)
+  while (cursor <= end) {
+    const week: HeatmapCell[] = []
+    for (let d = 0; d < 7; d++) {
+      const iso = cursor.toISOString().slice(0, 10)
+      week.push({
+        date: iso,
+        day: cursor.getDate(),
+        minutes: dailyTotals.value.get(iso) ?? 0,
+        inMonth: cursor.getMonth() === month - 1,
+      })
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    weeks.push(week)
+  }
+  return weeks
+}
+
+const heatmapMonths = computed(() => {
+  const monthSet = new Set<string>()
+  for (const e of entries.value) {
+    monthSet.add(e.date.slice(0, 7))
+  }
+  const sorted = [...monthSet].sort().reverse()
+
+  return sorted.map((key): HeatmapMonth => {
+    const [y, m] = key.split('-').map(Number) as [number, number]
+    const weeks = weeksForMonth(y, m)
+    let max = 0
+    for (const week of weeks) {
+      for (const cell of week) {
+        if (cell.minutes > max) max = cell.minutes
+      }
+    }
+    const label = new Date(y, m - 1).toLocaleString('default', { month: 'long', year: 'numeric' })
+    return { key, label, weeks, max }
+  })
+})
+
+function cellColor(cell: HeatmapCell, max: number): string {
+  if (cell.minutes === 0) return 'transparent'
+  if (max === 0) return 'transparent'
+  const r = cell.minutes / max
+  const stops: [number, number, number][] = [
+    [66, 133, 244],
+    [52, 199, 89],
+    [255, 214, 10],
+    [255, 149, 0],
+    [255, 59, 48],
+  ]
+  const idx = r * (stops.length - 1)
+  const lo = Math.floor(idx)
+  const hi = Math.min(lo + 1, stops.length - 1)
+  const t = idx - lo
+  const c = stops[lo]!.map((v, i) => Math.round(v + t * (stops[hi]![i]! - v)))
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`
 }
 
 function download(blob: Blob, filename: string) {
@@ -188,8 +187,29 @@ onMounted(load)
     />
   </form>
 
-  <div v-if="entries.length" class="chart-container">
-    <Line :data="chartData" :options="chartOptions" :plugins="[diffLinesPlugin]" />
+  <div v-for="month in heatmapMonths" :key="month.key" class="heatmap-container">
+    <div class="heatmap-title">{{ month.label }}</div>
+    <table class="heatmap">
+      <thead>
+        <tr>
+          <th v-for="d in ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']" :key="d">{{ d }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="(week, wi) in month.weeks" :key="wi">
+          <td
+            v-for="cell in week"
+            :key="cell.date"
+            class="heatmap-cell"
+            :class="{ 'out-of-month': !cell.inMonth }"
+            :style="{ backgroundColor: cellColor(cell, month.max) }"
+          >
+            <span class="heatmap-day">{{ cell.day }}</span>
+            <span v-if="cell.minutes" class="heatmap-minutes">{{ cell.minutes }}</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 
   <table v-if="entries.length">
@@ -259,9 +279,60 @@ onMounted(load)
   box-sizing: border-box;
 }
 
-.chart-container {
-  max-width: 700px;
+.heatmap-container {
+  max-width: 400px;
   margin: 0 auto 2rem;
+}
+
+.heatmap-title {
+  font-weight: 600;
+  font-size: 1.05em;
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.heatmap {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.heatmap th {
+  font-size: 0.7em;
+  color: #888;
+  padding: 0.25em 0;
+  font-weight: 500;
+}
+
+.heatmap-cell {
+  position: relative;
+  height: 2rem;
+  vertical-align: top;
+  border: 2px solid #1a1a1a;
+  border-radius: 4px;
+  padding: 2px;
+  text-align: center;
+}
+
+.heatmap-cell.out-of-month {
+  opacity: 0.3;
+}
+
+.heatmap-day {
+  display: block;
+  font-size: 0.65em;
+  color: #555;
+  line-height: 1;
+}
+
+.heatmap-minutes {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.75em;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  line-height: 1;
 }
 
 .note-cell {
@@ -302,6 +373,9 @@ onMounted(load)
   .entry-form input {
     background: #f9f9f9;
     border-color: #ccc;
+  }
+  .heatmap-cell {
+    border-color: #f9f9f9;
   }
 }
 </style>
