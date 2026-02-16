@@ -56,7 +56,6 @@ interface HeatmapMonth {
   key: string
   label: string
   weeks: HeatmapCell[][]
-  max: number
 }
 
 function weeksForMonth(year: number, month: number): HeatmapCell[][] {
@@ -74,7 +73,7 @@ function weeksForMonth(year: number, month: number): HeatmapCell[][] {
   while (cursor <= end) {
     const week: HeatmapCell[] = []
     for (let d = 0; d < 7; d++) {
-      const iso = cursor.toISOString().slice(0, 10)
+      const iso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`
       week.push({
         date: iso,
         day: cursor.getDate(),
@@ -98,34 +97,27 @@ const heatmapMonths = computed(() => {
   return sorted.map((key): HeatmapMonth => {
     const [y, m] = key.split('-').map(Number) as [number, number]
     const weeks = weeksForMonth(y, m)
-    let max = 0
-    for (const week of weeks) {
-      for (const cell of week) {
-        if (cell.minutes > max) max = cell.minutes
-      }
-    }
     const label = new Date(y, m - 1).toLocaleString('default', { month: 'long', year: 'numeric' })
-    return { key, label, weeks, max }
+    return { key, label, weeks }
   })
 })
 
-function cellColor(cell: HeatmapCell, max: number): string {
-  if (cell.minutes === 0) return 'transparent'
-  if (max === 0) return 'transparent'
-  const r = cell.minutes / max
-  const stops: [number, number, number][] = [
-    [66, 133, 244],
-    [52, 199, 89],
-    [255, 214, 10],
-    [255, 149, 0],
-    [255, 59, 48],
-  ]
-  const idx = r * (stops.length - 1)
-  const lo = Math.floor(idx)
-  const hi = Math.min(lo + 1, stops.length - 1)
-  const t = idx - lo
-  const c = stops[lo]!.map((v, i) => Math.round(v + t * (stops[hi]![i]! - v)))
-  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`
+const colorStops: { min: number; color: string }[] = [
+  { min: 0, color: 'transparent' },
+  { min: 1, color: '#8bf' },
+  { min: 15, color: '#4c7' },
+  { min: 30, color: '#db4' },
+  { min: 60, color: 'darkorange' },
+  { min: 90, color: '#c00' },
+  { min: 120, color: '#92b' },
+]
+
+function cellColor(cell: HeatmapCell): string {
+  let color = colorStops[0]!.color
+  for (const stop of colorStops) {
+    if (cell.minutes >= stop.min) color = stop.color
+  }
+  return color
 }
 
 function download(blob: Blob, filename: string) {
@@ -170,21 +162,10 @@ onMounted(load)
   <form class="entry-form" @submit.prevent="save">
     <div class="entry-row">
       <input type="date" v-model="date" required />
-      <input
-        type="number"
-        v-model.number="minutes"
-        step="1"
-        placeholder="Minutes"
-        required
-      />
+      <input type="number" v-model.number="minutes" step="1" placeholder="Minutes" required />
       <button type="submit">+</button>
     </div>
-    <input
-      type="text"
-      v-model="note"
-      placeholder="Note (optional)"
-      class="note-input"
-    />
+    <input type="text" v-model="note" placeholder="Note (optional)" class="note-input" />
   </form>
 
   <div v-for="month in heatmapMonths" :key="month.key" class="heatmap-container">
@@ -192,7 +173,7 @@ onMounted(load)
     <table class="heatmap">
       <thead>
         <tr>
-          <th v-for="d in ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']" :key="d">{{ d }}</th>
+          <th v-for="d in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']" :key="d">{{ d }}</th>
         </tr>
       </thead>
       <tbody>
@@ -202,17 +183,17 @@ onMounted(load)
             :key="cell.date"
             class="heatmap-cell"
             :class="{ 'out-of-month': !cell.inMonth }"
-            :style="{ backgroundColor: cellColor(cell, month.max) }"
+            :style="{ backgroundColor: cellColor(cell) }"
           >
             <span class="heatmap-day">{{ cell.day }}</span>
-            <span v-if="cell.minutes" class="heatmap-minutes">{{ cell.minutes }}</span>
+            <span v-if="cell.minutes" class="heatmap-minutes">{{ cell.minutes }}'</span>
           </td>
         </tr>
       </tbody>
     </table>
   </div>
 
-  <table v-if="entries.length">
+  <table v-if="entries.length" class="data-table">
     <thead>
       <tr>
         <th>Date</th>
@@ -335,12 +316,20 @@ onMounted(load)
   line-height: 1;
 }
 
+.data-table {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.data-table td,
+.data-table th {
+  vertical-align: top;
+  padding: 0.25em 0.25em;
+}
+
 .note-cell {
   text-align: left;
-  max-width: 10rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
 }
 
 .export {
