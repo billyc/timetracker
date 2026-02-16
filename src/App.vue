@@ -145,6 +145,25 @@ function exportCSV() {
   download(blob, 'timetracker.csv')
 }
 
+function tapCell(cellDate: string, currentMinutes: number) {
+  const input = prompt(
+    `Minutes for ${cellDate}:`,
+    currentMinutes ? String(currentMinutes) : '',
+  )
+  if (input == null) return
+  const val = parseInt(input, 10)
+  if (isNaN(val)) return
+
+  // Remove all existing entries for this date
+  entries.value = entries.value.filter(e => e.date !== cellDate)
+
+  // Add new entry if value > 0
+  if (val > 0) {
+    entries.value.push({ date: cellDate, value: val })
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.value))
+}
+
 function removeEntry(entry: TimeTrackerEntry) {
   const idx = entries.value.indexOf(entry)
   if (idx !== -1) {
@@ -184,6 +203,7 @@ onMounted(load)
             class="heatmap-cell"
             :class="{ 'out-of-month': !cell.inMonth }"
             :style="{ backgroundColor: cellColor(cell) }"
+            @click="tapCell(cell.date, cell.minutes)"
           >
             <span class="heatmap-day">{{ cell.day }}</span>
             <span v-if="cell.minutes" class="heatmap-minutes">{{ cell.minutes }}'</span>
