@@ -198,7 +198,6 @@ onMounted(load)
 
 <template>
   <h1>Time Tracker</h1>
-
   <div v-if="entries.length" class="total-banner">{{ totalHours }} hours total</div>
 
   <form class="entry-form" @submit.prevent="save">
@@ -256,6 +255,7 @@ onMounted(load)
     </div>
   </div>
 
+  <div class="heatmap-title">Data entries</div>
   <table v-if="entries.length" class="data-table">
     <thead>
       <tr>
@@ -285,11 +285,14 @@ onMounted(load)
 </template>
 
 <style scoped>
+h1 {
+  margin: 0 0;
+}
+
 .total-banner {
-  background: #0bb59c;
-  color: #fff;
+  color: #1cb262;
   font-size: 0.9em;
-  font-weight: 600;
+  font-weight: bold;
   padding: 0.35em 1em;
   margin-bottom: 1rem;
 }
@@ -334,14 +337,13 @@ onMounted(load)
 
 .heatmap-container {
   max-width: 400px;
-  margin: 0 auto 2rem;
+  margin: 0 auto 1rem;
 }
 
 .heatmap-title {
   font-weight: 600;
-  font-size: 1.05em;
-  text-align: center;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0rem;
+  text-align: left;
 }
 
 .heatmap {
