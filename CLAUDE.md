@@ -19,7 +19,11 @@ timetracker is a Vue 3 + TypeScript application built with Vite.
 - **Components:** `src/components/`
 - **Global styles:** `src/style.css` (imported in main.ts); components use `<style scoped>`
 - Components use Vue 3 `<script setup>` syntax with Composition API
-- No router or state management library is configured yet
+- No router or state management library is configured. Local storage in the browser is used instead of any sort of back-end system.
+
+## Design
+
+This site will usually be accessed from mobile devices like smartphones, so the user interface should away be optimized for small screens and touch.
 
 ## TypeScript
 

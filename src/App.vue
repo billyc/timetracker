@@ -19,13 +19,15 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, T
 interface TimeTrackerEntry {
   date: string
   value: number
+  note?: string
 }
 
 const STORAGE_KEY = 'timetracker'
 
 const entries = ref<TimeTrackerEntry[]>([])
 const date = ref(new Date().toISOString().slice(0, 10))
-const weight = ref<number | null>(null)
+const minutes = ref<number | null>(null)
+const note = ref('')
 
 function load() {
   const raw = localStorage.getItem(STORAGE_KEY)
@@ -35,10 +37,15 @@ function load() {
 }
 
 function save() {
-  if (weight.value == null) return
-  entries.value.push({ date: date.value, value: weight.value })
+  if (minutes.value == null) return
+  entries.value.push({
+    date: date.value,
+    value: minutes.value,
+    note: note.value || undefined,
+  })
   localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.value))
-  weight.value = null
+  minutes.value = null
+  note.value = ''
 }
 
 const sortedForChart = computed(() =>
@@ -66,7 +73,7 @@ const chartData = computed(() => ({
   labels: sortedForChart.value.map(e => e.date),
   datasets: [
     {
-      label: 'TimeTracker',
+      label: 'Time',
       data: sortedForChart.value.map(e => e.value),
       borderColor: 'transparent',
       backgroundColor: '#22c55e',
@@ -88,20 +95,20 @@ const chartData = computed(() => ({
 const diffLinesPlugin: Plugin<'line'> = {
   id: 'diffLines',
   afterDatasetsDraw(chart: Chart<'line'>) {
-    const weightMeta = chart.getDatasetMeta(0)
+    const timeMeta = chart.getDatasetMeta(0)
     const trendMeta = chart.getDatasetMeta(1)
-    if (!weightMeta || !trendMeta) return
+    if (!timeMeta || !trendMeta) return
     const ctx = chart.ctx
     ctx.save()
     ctx.strokeStyle = 'rgba(249, 115, 22, 0.5)'
     ctx.lineWidth = 1.5
-    for (let i = 0; i < weightMeta.data.length; i++) {
-      const wp = weightMeta.data[i]
-      const tp = trendMeta.data[i]
-      if (!wp || !tp) continue
+    for (let i = 0; i < timeMeta.data.length; i++) {
+      const tp = timeMeta.data[i]
+      const trp = trendMeta.data[i]
+      if (!tp || !trp) continue
       ctx.beginPath()
-      ctx.moveTo(wp.x, wp.y)
-      ctx.lineTo(tp.x, tp.y)
+      ctx.moveTo(tp.x, tp.y)
+      ctx.lineTo(trp.x, trp.y)
       ctx.stroke()
     }
     ctx.restore()
@@ -139,7 +146,10 @@ function exportJSON() {
 }
 
 function exportCSV() {
-  const rows = ['date,time', ...entries.value.map(e => `${e.date},${e.value}`)]
+  const rows = [
+    'date,minutes,note',
+    ...entries.value.map(e => `${e.date},${e.value},"${(e.note ?? '').replace(/"/g, '""')}"`),
+  ]
   const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
   download(blob, 'timetracker.csv')
 }
@@ -156,12 +166,26 @@ onMounted(load)
 </script>
 
 <template>
-  <h1>Time Series Data Tracker</h1>
+  <h1>Time Tracker</h1>
 
   <form class="entry-form" @submit.prevent="save">
-    <input type="date" v-model="date" required />
-    <input type="number" v-model.number="weight" step="0.1" placeholder="minutes" required />
-    <button type="submit">Save</button>
+    <div class="entry-row">
+      <input type="date" v-model="date" required />
+      <input
+        type="number"
+        v-model.number="minutes"
+        step="1"
+        placeholder="Minutes"
+        required
+      />
+      <button type="submit">+</button>
+    </div>
+    <input
+      type="text"
+      v-model="note"
+      placeholder="Note (optional)"
+      class="note-input"
+    />
   </form>
 
   <div v-if="entries.length" class="chart-container">
@@ -172,13 +196,16 @@ onMounted(load)
     <thead>
       <tr>
         <th>Date</th>
-        <th>Minutes</th>
+        <th>Min</th>
+        <th>Note</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
       <tr v-for="entry in sortedForTable" :key="entry.date + entry.value">
         <td>{{ entry.date }}</td>
         <td>{{ entry.value }}</td>
+        <td class="note-cell">{{ entry.note ?? '' }}</td>
         <td class="delete-cell">
           <span class="delete-btn" @click="removeEntry(entry)">&times;</span>
         </td>
@@ -187,17 +214,35 @@ onMounted(load)
   </table>
 
   <p v-if="entries.length" class="export">
-    Export data as: <a href="#" @click.prevent="exportJSON">JSON</a>&nbsp;
-    <a href="#" @click.prevent="exportCSV">CSV</a>
+    Export data as:&nbsp;
+    <a href="#" @click.prevent="exportCSV">CSV</a>&nbsp;
+    <a href="#" @click.prevent="exportJSON">JSON</a>
   </p>
 </template>
 
 <style scoped>
 .entry-form {
   display: flex;
+  flex-direction: column;
   gap: 0.5rem;
-  justify-content: center;
   margin-bottom: 2rem;
+  max-width: 400px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.entry-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.entry-row input[type='date'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.entry-row input[type='number'] {
+  width: 5rem;
 }
 
 .entry-form input {
@@ -209,9 +254,22 @@ onMounted(load)
   font-size: 1em;
 }
 
+.note-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .chart-container {
   max-width: 700px;
   margin: 0 auto 2rem;
+}
+
+.note-cell {
+  text-align: left;
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .export {
@@ -231,14 +289,9 @@ onMounted(load)
 }
 
 .delete-btn {
-  visibility: hidden;
   cursor: pointer;
-  color: #888;
+  color: #bbb;
   font-size: 1.1em;
-}
-
-tr:hover .delete-btn {
-  visibility: visible;
 }
 
 .delete-btn:hover {
