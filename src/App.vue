@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 
 interface TimeTrackerEntry {
   date: string
@@ -145,23 +145,37 @@ function exportCSV() {
   download(blob, 'timetracker.csv')
 }
 
-function tapCell(cellDate: string, currentMinutes: number) {
-  const input = prompt(
-    `Minutes for ${cellDate}:`,
-    currentMinutes ? String(currentMinutes) : '',
-  )
-  if (input == null) return
-  const val = parseInt(input, 10)
-  if (isNaN(val)) return
+const editingDate = ref<string | null>(null)
+const editingValue = ref<number | null>(null)
+const editInput = ref<HTMLInputElement | null>(null)
 
-  // Remove all existing entries for this date
+function tapCell(cellDate: string, currentMinutes: number) {
+  editingDate.value = cellDate
+  editingValue.value = currentMinutes || null
+  nextTick(() => {
+    editInput.value?.focus()
+    editInput.value?.select()
+  })
+}
+
+function commitEdit() {
+  const cellDate = editingDate.value
+  if (!cellDate) return
+  const val = editingValue.value
+
   entries.value = entries.value.filter(e => e.date !== cellDate)
 
-  // Add new entry if value > 0
-  if (val > 0) {
+  if (val != null && val > 0) {
     entries.value.push({ date: cellDate, value: val })
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.value))
+  editingDate.value = null
+  editingValue.value = null
+}
+
+function cancelEdit() {
+  editingDate.value = null
+  editingValue.value = null
 }
 
 function removeEntry(entry: TimeTrackerEntry) {
@@ -211,6 +225,26 @@ onMounted(load)
         </tr>
       </tbody>
     </table>
+  </div>
+
+  <div v-if="editingDate" class="modal-overlay" @click.self="cancelEdit">
+    <div class="modal">
+      <div class="modal-title">Edit total minutes for {{ editingDate }}</div>
+      <input
+        ref="editInput"
+        type="number"
+        inputmode="numeric"
+        class="modal-input"
+        v-model.number="editingValue"
+        placeholder="Minutes"
+        @keydown.enter="commitEdit"
+        @keydown.escape="cancelEdit"
+      />
+      <div class="modal-buttons">
+        <button type="button" @click="cancelEdit">Cancel</button>
+        <button type="button" @click="commitEdit">Save</button>
+      </div>
+    </div>
   </div>
 
   <table v-if="entries.length" class="data-table">
@@ -326,6 +360,54 @@ onMounted(load)
   line-height: 1;
 }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: #2a2a2a;
+  border-radius: 12px;
+  padding: 1.25rem;
+  min-width: 240px;
+  text-align: center;
+}
+
+.modal-title {
+  font-size: 0.9em;
+  color: #aaa;
+  margin-bottom: 0.75rem;
+}
+
+.modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5em 0.75em;
+  border-radius: 8px;
+  border: 1px solid #444;
+  background: #1a1a1a;
+  color: inherit;
+  font-size: 1.1em;
+  text-align: center;
+  margin-bottom: 0.75rem;
+}
+
+.modal-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.modal-buttons button {
+  flex: 1;
+  padding: 0.5em;
+  font-size: 0.9em;
+}
+
 .heatmap-minutes {
   display: block;
   margin-top: 0.25rem;
@@ -385,6 +467,13 @@ onMounted(load)
   }
   .heatmap-cell {
     border-color: #f9f9f9;
+  }
+  .modal {
+    background: #fff;
+  }
+  .modal-input {
+    background: #f9f9f9;
+    border-color: #ccc;
   }
 }
 </style>
