@@ -88,7 +88,9 @@ function weeksForMonth(year: number, month: number): HeatmapCell[][] {
 }
 
 const heatmapMonths = computed(() => {
-  const monthSet = new Set<string>()
+  const now = new Date()
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const monthSet = new Set<string>([currentMonth])
   for (const e of entries.value) {
     monthSet.add(e.date.slice(0, 7))
   }
@@ -173,6 +175,11 @@ function commitEdit() {
   editingValue.value = null
 }
 
+const totalHours = computed(() => {
+  const totalMin = entries.value.reduce((sum, e) => sum + e.value, 0)
+  return (totalMin / 60).toFixed(1)
+})
+
 function cancelEdit() {
   editingDate.value = null
   editingValue.value = null
@@ -191,6 +198,8 @@ onMounted(load)
 
 <template>
   <h1>Time Tracker</h1>
+
+  <div v-if="entries.length" class="total-banner">{{ totalHours }} hours total</div>
 
   <form class="entry-form" @submit.prevent="save">
     <div class="entry-row">
@@ -276,6 +285,15 @@ onMounted(load)
 </template>
 
 <style scoped>
+.total-banner {
+  background: #0bb59c;
+  color: #fff;
+  font-size: 0.9em;
+  font-weight: 600;
+  padding: 0.35em 1em;
+  margin-bottom: 1rem;
+}
+
 .entry-form {
   display: flex;
   flex-direction: column;
@@ -365,7 +383,8 @@ onMounted(load)
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  padding-top: 25vh;
   justify-content: center;
   z-index: 100;
 }
