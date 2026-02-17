@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
+import { Bar } from 'vue-chartjs'
+import { Chart as ChartJS, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js'
+
+ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip)
 
 interface TimeTrackerEntry {
   date: string
@@ -106,11 +110,11 @@ const heatmapMonths = computed(() => {
 
 const colorStops: { min: number; color: string }[] = [
   { min: 0, color: 'transparent' },
-  { min: 1, color: '#a0f263' },
+  { min: 1, color: '#d6c65B' },
   { min: 15, color: '#68daaa' },
   { min: 30, color: '#53a8d4' },
-  { min: 60, color: '#546dd4' },
-  { min: 90, color: '#624eb9' },
+  { min: 60, color: '#5064e0' },
+  { min: 90, color: '#623ea9' },
   { min: 120, color: '#cd4c9e' },
 ]
 
@@ -180,6 +184,112 @@ const totalHours = computed(() => {
   return (totalMin / 60).toFixed(1)
 })
 
+function isoWeekLabel(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00')
+  const day = d.getDay()
+  const thu = new Date(d)
+  thu.setDate(d.getDate() - ((day + 6) % 7) + 3)
+  const yearStart = new Date(thu.getFullYear(), 0, 1)
+  const weekNum = Math.ceil(((thu.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
+  return `${thu.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
+}
+
+const weeklyChartData = computed(() => {
+  const map = new Map<string, number>()
+  for (const e of entries.value) {
+    const week = isoWeekLabel(e.date)
+    map.set(week, (map.get(week) ?? 0) + e.value)
+  }
+  if (map.size === 0) return { labels: [], datasets: [] }
+
+  const weeks = [...map.keys()].sort()
+  const firstWeek = weeks[0]!
+  const lastWeek = weeks[weeks.length - 1]!
+
+  // Fill in all weeks between first and last (including gaps with 0)
+  const allWeeks: string[] = []
+  const [fy, fw] = firstWeek.split('-W').map(Number) as [number, number]
+  const [ly, lw] = lastWeek.split('-W').map(Number) as [number, number]
+  let cy = fy
+  let cw = fw
+  while (cy < ly || (cy === ly && cw <= lw)) {
+    allWeeks.push(`${cy}-W${String(cw).padStart(2, '0')}`)
+    cw++
+    // ISO weeks max out at 52 or 53; approximate with 52 then let label logic handle it
+    const lastDay = new Date(cy, 11, 31)
+    const maxWeek = isoWeekLabel(lastDay.toISOString().slice(0, 10)).split('-W').map(Number)[1]!
+    if (cw > maxWeek) {
+      cw = 1
+      cy++
+    }
+  }
+
+  const recent = allWeeks.slice(-12)
+  const weeklyData = recent.map(w => map.get(w) ?? 0)
+  const priorCumulative: number[] = []
+  let runningTotal = 0
+  for (const v of weeklyData) {
+    priorCumulative.push(runningTotal)
+    runningTotal += v
+  }
+  // Build x-axis labels: show month name on the first week of each month
+  let lastMonth = ''
+  const xLabels = recent.map(w => {
+    const [wy, ww] = w.split('-W').map(Number) as [number, number]
+    // Find the Monday of this ISO week
+    const jan4 = new Date(wy, 0, 4)
+    const mon = new Date(jan4)
+    mon.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7) + (ww - 1) * 7)
+    const monthKey = `${mon.getFullYear()}-${mon.getMonth()}`
+    if (monthKey !== lastMonth) {
+      lastMonth = monthKey
+      if (mon.getMonth() === 0) {
+        return mon.toLocaleString('default', { month: 'short' }) + ' ' + mon.getFullYear()
+      }
+      return mon.toLocaleString('default', { month: 'short' })
+    }
+    return ''
+  })
+
+  return {
+    labels: xLabels,
+    datasets: [
+      {
+        label: 'Cumulative',
+        data: priorCumulative,
+        backgroundColor: '#646cff',
+        stack: 'stack',
+      },
+      {
+        label: 'This Week',
+        data: weeklyData,
+        backgroundColor: '#83d583',
+        stack: 'stack',
+      },
+    ],
+  }
+})
+
+const weeklyChartOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  barPercentage: 0.98,
+  categoryPercentage: 1.0,
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { stacked: true, ticks: { color: '#888', font: { size: 10 } }, grid: { display: false } },
+    y: {
+      stacked: true,
+      ticks: {
+        color: '#888',
+        stepSize: 60,
+        callback: (v: number | string) => Math.round(Number(v) / 60) + 'h',
+      },
+      grid: { color: 'rgba(255,255,255,0.06)' },
+    },
+  },
+}
+
 function cancelEdit() {
   editingDate.value = null
   editingValue.value = null
@@ -193,7 +303,26 @@ function removeEntry(entry: TimeTrackerEntry) {
   }
 }
 
-onMounted(load)
+const initialLoad = ref(true)
+
+function cellAnimDelay(mi: number, wi: number, ci: number): number {
+  let offset = 0
+  for (let i = 0; i < mi; i++) {
+    offset += heatmapMonths.value[i]!.weeks.length * 7
+  }
+  return (offset + wi * 7 + ci) * 10
+}
+
+onMounted(() => {
+  load()
+  const totalCells = heatmapMonths.value.reduce((sum, m) => sum + m.weeks.length * 7, 0)
+  setTimeout(
+    () => {
+      initialLoad.value = false
+    },
+    totalCells * 10 + 150
+  )
+})
 </script>
 
 <template>
@@ -205,13 +334,20 @@ onMounted(load)
   <form class="entry-form" @submit.prevent="save">
     <div class="entry-row">
       <input type="date" v-model="date" required />
-      <input type="number" v-model.number="minutes" step="1" placeholder="Minutes" required />
+      <input type="number" v-model.number="minutes" step="1" placeholder="minutes" required />
       <button type="submit">+</button>
     </div>
-    <input type="text" v-model="note" placeholder="Note (optional)" class="note-input" />
+    <input type="text" v-model="note" placeholder="notes" class="note-input" />
   </form>
 
-  <div v-for="month in heatmapMonths" :key="month.key" class="heatmap-container">
+  <div v-if="entries.length" class="chart-container">
+    <div class="heatmap-title">Cumulative hours of input by week</div>
+    <div class="chart-wrap">
+      <Bar :data="weeklyChartData" :options="weeklyChartOptions" />
+    </div>
+  </div>
+
+  <div v-for="(month, mi) in heatmapMonths" :key="month.key" class="heatmap-container">
     <div class="heatmap-title">{{ month.label }}</div>
     <table class="heatmap">
       <thead>
@@ -222,11 +358,14 @@ onMounted(load)
       <tbody>
         <tr v-for="(week, wi) in month.weeks" :key="wi">
           <td
-            v-for="cell in week"
+            v-for="(cell, ci) in week"
             :key="cell.date"
             class="heatmap-cell"
-            :class="{ 'out-of-month': !cell.inMonth }"
-            :style="{ backgroundColor: cellColor(cell) }"
+            :class="{ 'out-of-month': !cell.inMonth, 'cell-animate': initialLoad }"
+            :style="{
+              backgroundColor: cellColor(cell),
+              animationDelay: initialLoad ? cellAnimDelay(mi, wi, ci) + 'ms' : undefined,
+            }"
             @click="tapCell(cell.date, cell.minutes)"
           >
             <span class="heatmap-day">{{ cell.day }}</span>
@@ -375,6 +514,19 @@ h1 {
   opacity: 0.3;
 }
 
+@keyframes cellFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.cell-animate {
+  animation: cellFadeIn 0.15s linear backwards;
+}
+
 .heatmap-day {
   display: block;
   font-size: 0.65em;
@@ -439,6 +591,15 @@ h1 {
   color: #fff;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
   line-height: 1;
+}
+
+.chart-container {
+  max-width: 400px;
+  margin: 0 auto 1.5rem;
+}
+
+.chart-wrap {
+  height: 180px;
 }
 
 .data-table {
