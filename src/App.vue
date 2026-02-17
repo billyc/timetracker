@@ -106,12 +106,12 @@ const heatmapMonths = computed(() => {
 
 const colorStops: { min: number; color: string }[] = [
   { min: 0, color: 'transparent' },
-  { min: 1, color: '#8bf' },
-  { min: 15, color: '#4c7' },
-  { min: 30, color: '#db4' },
-  { min: 60, color: 'darkorange' },
-  { min: 90, color: '#c00' },
-  { min: 120, color: '#92b' },
+  { min: 1, color: '#a0f263' },
+  { min: 15, color: '#68daaa' },
+  { min: 30, color: '#53a8d4' },
+  { min: 60, color: '#546dd4' },
+  { min: 90, color: '#624eb9' },
+  { min: 120, color: '#cd4c9e' },
 ]
 
 function cellColor(cell: HeatmapCell): string {
@@ -198,7 +198,9 @@ onMounted(load)
 
 <template>
   <h1>Time Tracker</h1>
-  <div v-if="entries.length" class="total-banner">{{ totalHours }} hours total</div>
+  <div v-if="entries.length" class="total-banner">
+    <span style="color: #83d583">{{ totalHours }}</span> hours total
+  </div>
 
   <form class="entry-form" @submit.prevent="save">
     <div class="entry-row">
@@ -290,10 +292,10 @@ h1 {
 }
 
 .total-banner {
-  color: #1cb262;
-  font-size: 0.9em;
+  color: #36c;
+  font-size: 1.2rem;
   font-weight: bold;
-  padding: 0.35em 1em;
+  padding: 0.15em 1em;
   margin-bottom: 1rem;
 }
 
