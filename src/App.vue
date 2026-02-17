@@ -142,6 +142,29 @@ function exportJSON() {
   download(blob, 'timetracker.json')
 }
 
+function triggerImport() {
+  importInput.value?.click()
+}
+
+function importJSON(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result as string) as TimeTrackerEntry[]
+      if (!Array.isArray(data)) throw new Error('Not an array')
+      entries.value = data
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.value))
+    } catch {
+      alert('Invalid JSON file.')
+    }
+  }
+  reader.readAsText(file)
+  // Reset so the same file can be re-imported
+  ;(event.target as HTMLInputElement).value = ''
+}
+
 function exportCSV() {
   const rows = [
     'date,minutes,note',
@@ -150,6 +173,8 @@ function exportCSV() {
   const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
   download(blob, 'timetracker.csv')
 }
+
+const importInput = ref<HTMLInputElement | null>(null)
 
 const editingDate = ref<string | null>(null)
 const editingValue = ref<number | null>(null)
@@ -184,23 +209,19 @@ const totalHours = computed(() => {
   return (totalMin / 60).toFixed(1)
 })
 
-function isoWeekLabel(dateStr: string): string {
+function weekStartDate(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00')
-  const day = d.getDay()
-  const thu = new Date(d)
-  thu.setDate(d.getDate() - ((day + 6) % 7) + 3)
-  const yearStart = new Date(thu.getFullYear(), 0, 1)
-  const weekNum = Math.ceil(((thu.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
-  return `${thu.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
+  d.setDate(d.getDate() - d.getDay()) // rewind to Sunday
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 const weeklyChartData = computed(() => {
   const map = new Map<string, number>()
   for (const e of entries.value) {
-    const week = isoWeekLabel(e.date)
+    const week = weekStartDate(e.date)
     map.set(week, (map.get(week) ?? 0) + e.value)
   }
-  if (map.size === 0) return { labels: [], datasets: [] }
+  if (map.size === 0) return { labels: [], weekStarts: [] as string[], datasets: [] }
 
   const weeks = [...map.keys()].sort()
   const firstWeek = weeks[0]!
@@ -208,29 +229,17 @@ const weeklyChartData = computed(() => {
 
   // Fill in all weeks between first and last (including gaps with 0)
   const allWeeks: string[] = []
-  const [fy, fw] = firstWeek.split('-W').map(Number) as [number, number]
-  const [ly, lw] = lastWeek.split('-W').map(Number) as [number, number]
-  let cy = fy
-  let cw = fw
-  while (cy < ly || (cy === ly && cw <= lw)) {
-    allWeeks.push(`${cy}-W${String(cw).padStart(2, '0')}`)
-    cw++
-    // ISO weeks max out at 52 or 53; approximate with 52 then let label logic handle it
-    const lastDay = new Date(cy, 11, 31)
-    const maxWeek = isoWeekLabel(lastDay.toISOString().slice(0, 10)).split('-W').map(Number)[1]!
-    if (cw > maxWeek) {
-      cw = 1
-      cy++
-    }
+  const cursor = new Date(firstWeek + 'T00:00:00')
+  const end = new Date(lastWeek + 'T00:00:00')
+  while (cursor <= end) {
+    allWeeks.push(
+      `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`
+    )
+    cursor.setDate(cursor.getDate() + 7)
   }
 
-  const recent = allWeeks.slice(-12)
-  const weeklyData = recent.map(w => map.get(w) ?? 0)
-  const recentSet = new Set(recent)
+  const weeklyData = allWeeks.map(w => map.get(w) ?? 0)
   let runningTotal = 0
-  for (const [week, mins] of map) {
-    if (!recentSet.has(week)) runningTotal += mins
-  }
   const priorCumulative: number[] = []
   for (const v of weeklyData) {
     priorCumulative.push(runningTotal)
@@ -238,25 +247,22 @@ const weeklyChartData = computed(() => {
   }
   // Build x-axis labels: show month name on the first week of each month
   let lastMonth = ''
-  const xLabels = recent.map(w => {
-    const [wy, ww] = w.split('-W').map(Number) as [number, number]
-    // Find the Monday of this ISO week
-    const jan4 = new Date(wy, 0, 4)
-    const mon = new Date(jan4)
-    mon.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7) + (ww - 1) * 7)
-    const monthKey = `${mon.getFullYear()}-${mon.getMonth()}`
+  const xLabels = allWeeks.map(w => {
+    const sun = new Date(w + 'T00:00:00')
+    const monthKey = `${sun.getFullYear()}-${sun.getMonth()}`
     if (monthKey !== lastMonth) {
       lastMonth = monthKey
-      if (mon.getMonth() === 0) {
-        return mon.toLocaleString('default', { month: 'short' }) + ' ' + mon.getFullYear()
+      if (sun.getMonth() === 0) {
+        return sun.toLocaleString('default', { month: 'short' }) + ' ' + sun.getFullYear()
       }
-      return mon.toLocaleString('default', { month: 'short' })
+      return sun.toLocaleString('default', { month: 'short' })
     }
     return ''
   })
 
   return {
     labels: xLabels,
+    weekStarts: allWeeks,
     datasets: [
       {
         label: 'Cumulative',
@@ -274,7 +280,7 @@ const weeklyChartData = computed(() => {
   }
 })
 
-const weeklyChartOptions = {
+const weeklyChartOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
   barPercentage: 0.98,
@@ -283,6 +289,17 @@ const weeklyChartOptions = {
     legend: { display: false },
     tooltip: {
       callbacks: {
+        title: (items: { dataIndex: number }[]) => {
+          const idx = items[0]?.dataIndex
+          if (idx == null) return ''
+          const dateStr = weeklyChartData.value.weekStarts[idx]
+          if (!dateStr) return ''
+          const d = new Date(dateStr + 'T00:00:00')
+          return (
+            'Week starting ' +
+            d.toLocaleDateString('default', { month: 'long', day: '2-digit', year: 'numeric' })
+          )
+        },
         label: (ctx: { dataset: { label?: string }; parsed: { y: number | null } }) => {
           const hours = ((ctx.parsed.y ?? 0) / 60).toFixed(1)
           return `${ctx.dataset.label ?? ''}: ${hours}h`
@@ -302,7 +319,7 @@ const weeklyChartOptions = {
       grid: { color: 'rgba(255,255,255,0.06)' },
     },
   },
-}
+}))
 
 function cancelEdit() {
   editingDate.value = null
@@ -341,10 +358,6 @@ onMounted(() => {
 
 <template>
   <h1>Time Tracker</h1>
-  <div v-if="entries.length" class="total-banner">
-    <span style="color: #83d583">{{ totalHours }}</span> hours total
-  </div>
-
   <form class="entry-form" @submit.prevent="save">
     <div class="entry-row">
       <input type="date" v-model="date" required />
@@ -355,7 +368,10 @@ onMounted(() => {
   </form>
 
   <div v-if="entries.length" class="chart-container">
-    <div class="heatmap-title">Cumulative hours of input by week</div>
+    <div class="heatmap-title">
+      Cumulative hours of input:
+      <span style="font-weight: 800; color: #83d583">{{ totalHours }}</span> hours
+    </div>
     <div class="chart-wrap">
       <Bar :data="weeklyChartData" :options="weeklyChartOptions" />
     </div>
@@ -437,19 +453,16 @@ onMounted(() => {
     <a href="#" @click.prevent="exportCSV">CSV</a>&nbsp;
     <a href="#" @click.prevent="exportJSON">JSON</a>
   </p>
+
+  <p class="export">
+    <a href="#" @click.prevent="triggerImport">Import JSON</a>
+    <input ref="importInput" type="file" accept=".json" hidden @change="importJSON" />
+  </p>
 </template>
 
 <style scoped>
 h1 {
-  margin: 0 0;
-}
-
-.total-banner {
-  color: #36c;
-  font-size: 1.2rem;
-  font-weight: bold;
-  padding: 0.15em 1em;
-  margin-bottom: 1rem;
+  margin: 0.5rem 0 0.75rem 0;
 }
 
 .entry-form {
