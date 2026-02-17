@@ -226,8 +226,12 @@ const weeklyChartData = computed(() => {
 
   const recent = allWeeks.slice(-12)
   const weeklyData = recent.map(w => map.get(w) ?? 0)
-  const priorCumulative: number[] = []
+  const recentSet = new Set(recent)
   let runningTotal = 0
+  for (const [week, mins] of map) {
+    if (!recentSet.has(week)) runningTotal += mins
+  }
+  const priorCumulative: number[] = []
   for (const v of weeklyData) {
     priorCumulative.push(runningTotal)
     runningTotal += v
@@ -275,7 +279,17 @@ const weeklyChartOptions = {
   maintainAspectRatio: false,
   barPercentage: 0.98,
   categoryPercentage: 1.0,
-  plugins: { legend: { display: false } },
+  plugins: {
+    legend: { display: false },
+    tooltip: {
+      callbacks: {
+        label: (ctx: { dataset: { label?: string }; parsed: { y: number | null } }) => {
+          const hours = ((ctx.parsed.y ?? 0) / 60).toFixed(1)
+          return `${ctx.dataset.label ?? ''}: ${hours}h`
+        },
+      },
+    },
+  },
   scales: {
     x: { stacked: true, ticks: { color: '#888', font: { size: 10 } }, grid: { display: false } },
     y: {
