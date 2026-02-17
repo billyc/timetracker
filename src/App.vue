@@ -19,16 +19,31 @@ interface HeatmapCell {
 }
 
 const STORAGE_KEY = 'timetracker'
+const INITIAL_HOURS_KEY = 'timetracker_initial_hours'
 
 const entries = ref<TimeTrackerEntry[]>([])
 const date = ref(new Date().toISOString().slice(0, 10))
 const minutes = ref<number | null>(null)
 const note = ref('')
+const initialHours = ref<number | null>(null)
 
 function load() {
   const raw = localStorage.getItem(STORAGE_KEY)
   if (raw) {
     entries.value = JSON.parse(raw) as TimeTrackerEntry[]
+  }
+  const savedHours = localStorage.getItem(INITIAL_HOURS_KEY)
+  if (savedHours) {
+    initialHours.value = Number(savedHours)
+  }
+}
+
+function saveInitialHours() {
+  if (initialHours.value != null && initialHours.value > 0) {
+    localStorage.setItem(INITIAL_HOURS_KEY, String(initialHours.value))
+  } else {
+    initialHours.value = null
+    localStorage.removeItem(INITIAL_HOURS_KEY)
   }
 }
 
@@ -146,23 +161,54 @@ function triggerImport() {
   importInput.value?.click()
 }
 
-function importJSON(event: Event) {
+function parseCSV(text: string): TimeTrackerEntry[] {
+  const lines = text.trim().split('\n')
+  if (lines.length < 2) throw new Error('Empty CSV')
+  const result: TimeTrackerEntry[] = []
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i]!
+    // Match: date, minutes, quoted note (matching the export format)
+    const m = line.match(/^(\d{4}-\d{2}-\d{2}),(\d+),("(?:[^"]|"")*"|.*)$/)
+    if (!m) continue
+    const date = m[1]!
+    const value = Number(m[2])
+    let note = m[3]!
+    if (note.startsWith('"') && note.endsWith('"')) {
+      note = note.slice(1, -1).replace(/""/g, '"')
+    }
+    result.push({ date, value, note: note || undefined })
+  }
+  return result
+}
+
+function importFile(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
   if (!file) return
   const reader = new FileReader()
   reader.onload = () => {
     try {
-      const data = JSON.parse(reader.result as string) as TimeTrackerEntry[]
+      const text = reader.result as string
+      const data = file.name.endsWith('.csv')
+        ? parseCSV(text)
+        : (JSON.parse(text) as TimeTrackerEntry[])
       if (!Array.isArray(data)) throw new Error('Not an array')
       entries.value = data
       localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.value))
     } catch {
-      alert('Invalid JSON file.')
+      alert('Invalid file.')
     }
   }
   reader.readAsText(file)
   // Reset so the same file can be re-imported
   ;(event.target as HTMLInputElement).value = ''
+}
+
+function clearAll() {
+  if (!confirm('Delete all data? This cannot be undone.')) return
+  entries.value = []
+  initialHours.value = null
+  localStorage.removeItem(STORAGE_KEY)
+  localStorage.removeItem(INITIAL_HOURS_KEY)
 }
 
 function exportCSV() {
@@ -206,7 +252,7 @@ function commitEdit() {
 
 const totalHours = computed(() => {
   const totalMin = entries.value.reduce((sum, e) => sum + e.value, 0)
-  return (totalMin / 60).toFixed(1)
+  return (totalMin / 60 + (initialHours.value ?? 0)).toFixed(1)
 })
 
 function weekStartDate(dateStr: string): string {
@@ -239,7 +285,7 @@ const weeklyChartData = computed(() => {
   }
 
   const weeklyData = allWeeks.map(w => map.get(w) ?? 0)
-  let runningTotal = 0
+  let runningTotal = (initialHours.value ?? 0) * 60
   const priorCumulative: number[] = []
   for (const v of weeklyData) {
     priorCumulative.push(runningTotal)
@@ -357,7 +403,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <h1>Time Tracker</h1>
+  <h1>CI Time Tracker</h1>
   <form class="entry-form" @submit.prevent="save">
     <div class="entry-row">
       <input type="date" v-model="date" required />
@@ -448,16 +494,38 @@ onMounted(() => {
     </tbody>
   </table>
 
-  <p v-if="entries.length" class="export">
-    Export data as:&nbsp;
-    <a href="#" @click.prevent="exportCSV">CSV</a>&nbsp;
-    <a href="#" @click.prevent="exportJSON">JSON</a>
-  </p>
+  <div class="initial-hours">
+    <div class="initial-hours-label">Set initial hours of input</div>
+    <div class="initial-hours-hint">
+      This will be added to the running total of the entries above
+    </div>
+    <input
+      type="number"
+      v-model.number="initialHours"
+      step="any"
+      placeholder="0"
+      class="initial-hours-input"
+      @change="saveInitialHours"
+    />
+  </div>
 
-  <p class="export">
-    <a href="#" @click.prevent="triggerImport">Import JSON</a>
-    <input ref="importInput" type="file" accept=".json" hidden @change="importJSON" />
-  </p>
+  <div class="initial-hours">
+    <div class="initial-hours-label">Data management</div>
+    <p v-if="entries.length" class="export">
+      Export data as:&nbsp;
+      <a href="#" @click.prevent="exportCSV">CSV</a>&nbsp;
+      <a href="#" @click.prevent="exportJSON">JSON</a>
+    </p>
+
+    <p class="export">
+      <a href="#" @click.prevent="triggerImport">Import data</a>
+      <input ref="importInput" type="file" accept=".json,.csv" hidden @change="importFile" />
+    </p>
+
+    <p v-if="entries.length" class="export">
+      <a href="#" @click.prevent="clearAll">Clear all data</a>
+    </p>
+  </div>
 </template>
 
 <style scoped>
@@ -646,7 +714,6 @@ h1 {
 }
 
 .export {
-  margin-top: 1.5rem;
   font-size: 0.85em;
   color: #888;
 }
@@ -671,6 +738,34 @@ h1 {
   color: #e53e3e;
 }
 
+.initial-hours {
+  max-width: 400px;
+  margin: 1.5rem auto 0;
+  text-align: left;
+}
+
+.initial-hours-label {
+  font-weight: 600;
+  font-size: 0.9em;
+}
+
+.initial-hours-input {
+  width: 6rem;
+  margin-top: 0.35rem;
+  padding: 0.5em 0.75em;
+  border-radius: 8px;
+  border: 1px solid #444;
+  background: #1a1a1a;
+  color: inherit;
+  font-size: 1em;
+}
+
+.initial-hours-hint {
+  margin-top: 0.25rem;
+  font-size: 0.75em;
+  color: #888;
+}
+
 @media (prefers-color-scheme: light) {
   .entry-form input {
     background: #f9f9f9;
@@ -682,7 +777,8 @@ h1 {
   .modal {
     background: #fff;
   }
-  .modal-input {
+  .modal-input,
+  .initial-hours-input {
     background: #f9f9f9;
     border-color: #ccc;
   }
