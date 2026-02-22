@@ -525,6 +525,12 @@ onMounted(() => {
     <p v-if="entries.length" class="export">
       <a href="#" @click.prevent="clearAll">Clear all data</a>
     </p>
+    <br />
+    <hr />
+    <p style="font-size: 0.75rem; color: #888">
+      This site is open source with no trackers, cookies, etc.<br />Code is on
+      <a href="https://github.com/billyc/timetracker">GitHub</a>.
+    </p>
   </div>
 </template>
 
