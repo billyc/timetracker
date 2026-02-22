@@ -1,5 +1,17 @@
-# Vue 3 + TypeScript + Vite
+# CI Time Tracker
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+A simple time tracker for comprehensible input. Works best on mobile. 
 
-Learn more about the recommended Project Setup and IDE Support in the [Vue Docs TypeScript Guide](https://vuejs.org/guide/typescript/overview.html#project-setup).
+**Installation and usage**
+
+Use your phone browser's "Add to Home Screen" feature to put an icon on your phone! Then every time you watch a video or get some input, put in the number of minutes. The app will keep a running total of all your input and make some nice graphs.
+
+The "Initial Hours" are added to the running total. So if you gave yourself some initial hours before using the app, enter them here.
+
+You can also tap any date on the calendar to edit the total minutes for that day; useful if you are entering data from a different source.
+
+**Sync**
+
+There's no back-end server database so it doesn't sync between devices. Just pick one device and use that :-) and you can export/import data in JSON format to move between devices.
+
+Have fun :-)
