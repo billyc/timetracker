@@ -292,16 +292,23 @@ const weeklyChartData = computed(() => {
     runningTotal += v
   }
   // Build x-axis labels: show month name on the first week of each month
-  let lastMonth = ''
+  const labelledMonths = new Set<string>()
   const xLabels = allWeeks.map(w => {
     const sun = new Date(w + 'T00:00:00')
-    const monthKey = `${sun.getFullYear()}-${sun.getMonth()}`
-    if (monthKey !== lastMonth) {
-      lastMonth = monthKey
-      if (sun.getMonth() === 0) {
-        return sun.toLocaleString('default', { month: 'short' }) + ' ' + sun.getFullYear()
+    // Check if any day in this week (Sun–Sat) is the 1st of a month
+    for (let d = 0; d < 7; d++) {
+      const day = new Date(sun)
+      day.setDate(day.getDate() + d)
+      if (day.getDate() === 1) {
+        const key = `${day.getFullYear()}-${day.getMonth()}`
+        if (!labelledMonths.has(key)) {
+          labelledMonths.add(key)
+          if (day.getMonth() === 0) {
+            return day.toLocaleString('default', { month: 'short' }) + ' ' + day.getFullYear()
+          }
+          return day.toLocaleString('default', { month: 'short' })
+        }
       }
-      return sun.toLocaleString('default', { month: 'short' })
     }
     return ''
   })
@@ -325,6 +332,91 @@ const weeklyChartData = computed(() => {
     ],
   }
 })
+
+const monthlyChartData = computed(() => {
+  const map = new Map<string, number>()
+  for (const e of entries.value) {
+    const month = e.date.slice(0, 7) // "YYYY-MM"
+    map.set(month, (map.get(month) ?? 0) + e.value)
+  }
+  if (map.size === 0) return { labels: [], months: [] as string[], datasets: [] }
+
+  const months = [...map.keys()].sort()
+  const first = months[0]!
+  const last = months[months.length - 1]!
+
+  // Fill in all months between first and last (including gaps with 0)
+  const allMonths: string[] = []
+  const [startY, startM] = first.split('-').map(Number) as [number, number]
+  const [endY, endM] = last.split('-').map(Number) as [number, number]
+  let curY = startY,
+    curM = startM
+  while (curY < endY || (curY === endY && curM <= endM)) {
+    allMonths.push(`${curY}-${String(curM).padStart(2, '0')}`)
+    curM++
+    if (curM > 12) {
+      curM = 1
+      curY++
+    }
+  }
+
+  const data = allMonths.map(m => map.get(m) ?? 0)
+  const labels = allMonths.map(m => {
+    const [y, mo] = m.split('-').map(Number) as [number, number]
+    const d = new Date(y, mo - 1)
+    if (mo === 1) return d.toLocaleString('default', { month: 'short' }) + ' ' + y
+    return d.toLocaleString('default', { month: 'short' })
+  })
+
+  return {
+    labels,
+    months: allMonths,
+    datasets: [
+      {
+        label: 'Monthly Hours',
+        data,
+        backgroundColor: '#d47a5e',
+      },
+    ],
+  }
+})
+
+const monthlyChartOptions = computed(() => ({
+  responsive: true,
+  maintainAspectRatio: false,
+  barPercentage: 0.95,
+  categoryPercentage: 1.0,
+  plugins: {
+    legend: { display: false },
+    tooltip: {
+      callbacks: {
+        title: (items: { dataIndex: number }[]) => {
+          const idx = items[0]?.dataIndex
+          if (idx == null) return ''
+          const m = monthlyChartData.value.months[idx]
+          if (!m) return ''
+          const [y, mo] = m.split('-').map(Number) as [number, number]
+          return new Date(y, mo - 1).toLocaleString('default', { month: 'long', year: 'numeric' })
+        },
+        label: (ctx: { parsed: { y: number | null } }) => {
+          const hours = ((ctx.parsed.y ?? 0) / 60).toFixed(1)
+          return `${hours} hours`
+        },
+      },
+    },
+  },
+  scales: {
+    x: { ticks: { color: '#888', font: { size: 10 } }, grid: { display: false } },
+    y: {
+      ticks: {
+        color: '#888',
+        stepSize: 60,
+        callback: (v: number | string) => Math.round(Number(v) / 60) + 'h',
+      },
+      grid: { color: 'rgba(255,255,255,0.06)' },
+    },
+  },
+}))
 
 const weeklyChartOptions = computed(() => ({
   responsive: true,
@@ -354,7 +446,11 @@ const weeklyChartOptions = computed(() => ({
     },
   },
   scales: {
-    x: { stacked: true, ticks: { color: '#888', font: { size: 10 } }, grid: { display: false } },
+    x: {
+      stacked: true,
+      ticks: { color: '#888', font: { size: 10 }, autoSkip: false, maxRotation: 90 },
+      grid: { display: false },
+    },
     y: {
       stacked: true,
       ticks: {
@@ -404,6 +500,12 @@ onMounted(() => {
 
 <template>
   <h1>CI Time Tracker</h1>
+  <div class="heatmap-title" style="text-align: center; margin-bottom: 1rem">
+    <span style="line-height: 1rem; font-size: 2rem; font-weight: 900; color: #83d583">{{
+      totalHours
+    }}</span>
+    hours of input
+  </div>
   <form class="entry-form" @submit.prevent="save">
     <div class="entry-row">
       <input type="date" v-model="date" required />
@@ -414,12 +516,16 @@ onMounted(() => {
   </form>
 
   <div v-if="entries.length" class="chart-container">
-    <div class="heatmap-title">
-      Cumulative hours of input:
-      <span style="font-weight: 800; color: #83d583">{{ totalHours }}</span> hours
-    </div>
+    <div class="heatmap-title">Weekly progress</div>
     <div class="chart-wrap">
       <Bar :data="weeklyChartData" :options="weeklyChartOptions" />
+    </div>
+  </div>
+
+  <div v-if="entries.length" class="chart-container">
+    <div class="heatmap-title">Monthly totals</div>
+    <div class="chart-wrap">
+      <Bar :data="monthlyChartData" :options="monthlyChartOptions" />
     </div>
   </div>
 
@@ -583,9 +689,11 @@ h1 {
 }
 
 .heatmap-title {
-  font-weight: 600;
+  font-weight: 800;
+  margin-top: 0.5rem;
   margin-bottom: 0rem;
   text-align: left;
+  text-transform: uppercase;
 }
 
 .heatmap {
