@@ -125,12 +125,12 @@ const heatmapMonths = computed(() => {
 
 const colorStops: { min: number; color: string }[] = [
   { min: 0, color: 'transparent' },
-  { min: 1, color: '#d6c65B' },
-  { min: 15, color: '#68daaa' },
-  { min: 30, color: '#53a8d4' },
-  { min: 60, color: '#5064e0' },
-  { min: 90, color: '#623ea9' },
-  { min: 120, color: '#cd4c9e' },
+  { min: 1, color: 'hsl(80,66%,80%)' },
+  { min: 15, color: 'hsl(116,50%,78%)' },
+  { min: 30, color: 'hsl(136,50%,66%)' },
+  { min: 60, color: 'hsl(152,38%,56%)' },
+  { min: 90, color: 'hsl(170,54%,37%)' },
+  { min: 120, color: 'hsl(186,100%,24%)' },
 ]
 
 function cellColor(cell: HeatmapCell): string {
@@ -410,7 +410,7 @@ const monthlyChartOptions = computed(() => ({
     y: {
       ticks: {
         color: '#888',
-        stepSize: 60,
+        stepSize: 300,
         callback: (v: number | string) => Math.round(Number(v) / 60) + 'h',
       },
       grid: { color: 'rgba(255,255,255,0.06)' },
@@ -453,9 +453,21 @@ const weeklyChartOptions = computed(() => ({
     },
     y: {
       stacked: true,
+      min: 0,
+      max: (() => {
+        const ds = weeklyChartData.value.datasets as { data: number[] }[]
+        const len = ds[0]?.data.length ?? 0
+        let maxStack = 0
+        for (let i = 0; i < len; i++) {
+          let sum = 0
+          for (const d of ds) sum += d.data[i] ?? 0
+          if (sum > maxStack) maxStack = sum
+        }
+        return Math.floor(maxStack / 3000) * 3000 + 3000
+      })(),
       ticks: {
         color: '#888',
-        stepSize: 60,
+        stepSize: 3000,
         callback: (v: number | string) => Math.round(Number(v) / 60) + 'h',
       },
       grid: { color: 'rgba(255,255,255,0.06)' },
@@ -500,7 +512,7 @@ onMounted(() => {
 
 <template>
   <h1>CI Time Tracker</h1>
-  <div class="heatmap-title" style="text-align: center; margin-bottom: 1rem">
+  <div class="heatmap-title" style="text-transform: unset; text-align: center; margin-bottom: 1rem">
     <span style="line-height: 1rem; font-size: 2rem; font-weight: 900; color: #83d583">{{
       totalHours
     }}</span>
