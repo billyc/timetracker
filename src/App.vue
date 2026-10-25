@@ -426,8 +426,11 @@ const weeklyChartOptions = computed(() => ({
   plugins: {
     legend: { display: false },
     tooltip: {
+      mode: 'index',
+      intersect: false,
       callbacks: {
         title: (items: { dataIndex: number }[]) => {
+          if (items.length === 0) return ''
           const idx = items[0]?.dataIndex
           if (idx == null) return ''
           const dateStr = weeklyChartData.value.weekStarts[idx]
@@ -438,9 +441,26 @@ const weeklyChartOptions = computed(() => ({
             d.toLocaleDateString('default', { month: 'long', day: '2-digit', year: 'numeric' })
           )
         },
-        label: (ctx: { dataset: { label?: string }; parsed: { y: number | null } }) => {
-          const hours = ((ctx.parsed.y ?? 0) / 60).toFixed(1)
-          return `${ctx.dataset.label ?? ''}: ${hours}h`
+        label: (context: any) => {
+          let label = ''
+          const { dataIndex } = context
+          
+          if (dataIndex !== undefined && dataIndex !== null) {
+            const weeklyData = weeklyChartData.value.datasets[1]?.data ?? []
+            const priorCumulative = weeklyChartData.value.datasets[0]?.data ?? []
+            
+            const thisWeekValue = weeklyData[dataIndex] ?? 0
+            const cumulativeValue = priorCumulative[dataIndex] ?? 0
+            
+            if (thisWeekValue > 0) {
+              label += `This Week: ${(thisWeekValue / 60).toFixed(1)}h\n`
+            }
+            if (cumulativeValue > 0) {
+              label += `Cumulative: ${(cumulativeValue / 60).toFixed(1)}h`
+            }
+          }
+          
+          return label
         },
       },
     },
@@ -693,6 +713,7 @@ h1 {
 .note-input {
   width: 100%;
   box-sizing: border-box;
+  display: none;
 }
 
 .heatmap-container {
