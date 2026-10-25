@@ -5,11 +5,20 @@ import { Chart as ChartJS, BarElement, CategoryScale, LinearScale, Tooltip } fro
 
 ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip)
 
+type EntryType = 'input' | 'talking' | 'reading'
+const ENTRY_TYPES: EntryType[] = ['input', 'talking', 'reading']
+const TYPE_COLORS = { talking: '#e8c547', reading: '#d47a5e' }
+const INPUT_COLORS = { cumulative: '#646cff', thisWeek: '#83d583' }
+const BUTTON_COLORS: Record<EntryType, string> = { input: INPUT_COLORS.cumulative, ...TYPE_COLORS }
+
 interface TimeTrackerEntry {
   date: string
   value: number
+  type: EntryType
   note?: string
 }
+
+type TypeTotals = Record<EntryType, number>
 
 interface HeatmapCell {
   date: string
@@ -20,22 +29,52 @@ interface HeatmapCell {
 
 const STORAGE_KEY = 'timetracker'
 const INITIAL_HOURS_KEY = 'timetracker_initial_hours'
+const ENTRY_TYPE_KEY = 'timetracker_entry_type'
 
 const entries = ref<TimeTrackerEntry[]>([])
 const date = ref(new Date().toISOString().slice(0, 10))
 const minutes = ref<number | null>(null)
 const note = ref('')
 const initialHours = ref<number | null>(null)
+const entryType = ref<EntryType>('input')
+
+function isEntryType(t: unknown): t is EntryType {
+  return ENTRY_TYPES.includes(t as EntryType)
+}
+
+// Older data has no "type" field; those entries are all input
+function withTypes(data: Omit<TimeTrackerEntry, 'type'>[]): TimeTrackerEntry[] {
+  return data.map(e => {
+    const type = (e as Partial<TimeTrackerEntry>).type
+    return isEntryType(type) ? (e as TimeTrackerEntry) : { ...e, type: 'input' }
+  })
+}
+
+function persist() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.value))
+}
 
 function load() {
   const raw = localStorage.getItem(STORAGE_KEY)
   if (raw) {
-    entries.value = JSON.parse(raw) as TimeTrackerEntry[]
+    const stored = JSON.parse(raw) as TimeTrackerEntry[]
+    const migrated = withTypes(stored)
+    entries.value = migrated
+    if (migrated.some((e, i) => e !== stored[i])) persist()
   }
   const savedHours = localStorage.getItem(INITIAL_HOURS_KEY)
   if (savedHours) {
     initialHours.value = Number(savedHours)
   }
+  const savedType = localStorage.getItem(ENTRY_TYPE_KEY)
+  if (isEntryType(savedType)) {
+    entryType.value = savedType
+  }
+}
+
+function selectType(type: EntryType) {
+  entryType.value = type
+  localStorage.setItem(ENTRY_TYPE_KEY, type)
 }
 
 function saveInitialHours() {
@@ -52,9 +91,10 @@ function save() {
   entries.value.push({
     date: date.value,
     value: minutes.value,
+    type: entryType.value,
     note: note.value || undefined,
   })
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.value))
+  persist()
   minutes.value = null
   note.value = ''
 }
@@ -63,13 +103,24 @@ const sortedForTable = computed(() =>
   [...entries.value].sort((a, b) => b.date.localeCompare(a.date))
 )
 
-const dailyTotals = computed(() => {
-  const map = new Map<string, number>()
+const hasOtherTypes = computed(() => entries.value.some(e => e.type !== 'input'))
+
+// Sum minutes per type, grouped by the given key (date, week, month)
+function totalsBy(keyOf: (e: TimeTrackerEntry) => string): Map<string, TypeTotals> {
+  const map = new Map<string, TypeTotals>()
   for (const e of entries.value) {
-    map.set(e.date, (map.get(e.date) ?? 0) + e.value)
+    const key = keyOf(e)
+    let totals = map.get(key)
+    if (!totals) {
+      totals = { input: 0, talking: 0, reading: 0 }
+      map.set(key, totals)
+    }
+    totals[e.type] += e.value
   }
   return map
-})
+}
+
+const dailyTotals = computed(() => totalsBy(e => e.date))
 
 interface HeatmapMonth {
   key: string
@@ -96,7 +147,7 @@ function weeksForMonth(year: number, month: number): HeatmapCell[][] {
       week.push({
         date: iso,
         day: cursor.getDate(),
-        minutes: dailyTotals.value.get(iso) ?? 0,
+        minutes: dailyTotals.value.get(iso)?.input ?? 0,
         inMonth: cursor.getMonth() === month - 1,
       })
       cursor.setDate(cursor.getDate() + 1)
@@ -167,16 +218,19 @@ function parseCSV(text: string): TimeTrackerEntry[] {
   const result: TimeTrackerEntry[] = []
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!
-    // Match: date, minutes, quoted note (matching the export format)
-    const m = line.match(/^(\d{4}-\d{2}-\d{2}),(\d+),("(?:[^"]|"")*"|.*)$/)
+    // Match: date, minutes, optional type, quoted note (matching the export format)
+    const m = line.match(
+      /^(\d{4}-\d{2}-\d{2}),(\d+),(?:(input|talking|reading),)?("(?:[^"]|"")*"|.*)$/
+    )
     if (!m) continue
     const date = m[1]!
     const value = Number(m[2])
-    let note = m[3]!
+    const type = (m[3] as EntryType | undefined) ?? 'input'
+    let note = m[4]!
     if (note.startsWith('"') && note.endsWith('"')) {
       note = note.slice(1, -1).replace(/""/g, '"')
     }
-    result.push({ date, value, note: note || undefined })
+    result.push({ date, value, type, note: note || undefined })
   }
   return result
 }
@@ -192,8 +246,8 @@ function importFile(event: Event) {
         ? parseCSV(text)
         : (JSON.parse(text) as TimeTrackerEntry[])
       if (!Array.isArray(data)) throw new Error('Not an array')
-      entries.value = data
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.value))
+      entries.value = withTypes(data)
+      persist()
     } catch {
       alert('Invalid file.')
     }
@@ -213,8 +267,10 @@ function clearAll() {
 
 function exportCSV() {
   const rows = [
-    'date,minutes,note',
-    ...entries.value.map(e => `${e.date},${e.value},"${(e.note ?? '').replace(/"/g, '""')}"`),
+    'date,minutes,type,note',
+    ...entries.value.map(
+      e => `${e.date},${e.value},${e.type},"${(e.note ?? '').replace(/"/g, '""')}"`
+    ),
   ]
   const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
   download(blob, 'timetracker.csv')
@@ -223,37 +279,58 @@ function exportCSV() {
 const importInput = ref<HTMLInputElement | null>(null)
 
 const editingDate = ref<string | null>(null)
-const editingValue = ref<number | null>(null)
-const editInput = ref<HTMLInputElement | null>(null)
+const editingValues = ref<Record<EntryType, number | null>>({
+  input: null,
+  talking: null,
+  reading: null,
+})
+const editInputs = ref<HTMLInputElement[]>([])
 
-function tapCell(cellDate: string, currentMinutes: number) {
+function tapCell(cellDate: string) {
+  const totals = dailyTotals.value.get(cellDate)
   editingDate.value = cellDate
-  editingValue.value = currentMinutes || null
+  editingValues.value = {
+    input: totals?.input || null,
+    talking: totals?.talking || null,
+    reading: totals?.reading || null,
+  }
   nextTick(() => {
-    editInput.value?.focus()
-    editInput.value?.select()
+    const el = editInputs.value.find(i => i.dataset.type === entryType.value)
+    el?.focus()
+    el?.select()
   })
 }
 
 function commitEdit() {
   const cellDate = editingDate.value
   if (!cellDate) return
-  const val = editingValue.value
+  const totals = dailyTotals.value.get(cellDate)
 
-  entries.value = entries.value.filter(e => e.date !== cellDate)
-
-  if (val != null && val > 0) {
-    entries.value.push({ date: cellDate, value: val })
+  for (const type of ENTRY_TYPES) {
+    const val = Number(editingValues.value[type]) || 0
+    // Only replace entries for types whose total actually changed
+    if (val === (totals?.[type] ?? 0)) continue
+    entries.value = entries.value.filter(e => e.date !== cellDate || e.type !== type)
+    if (val > 0) {
+      entries.value.push({ date: cellDate, value: val, type })
+    }
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.value))
-  editingDate.value = null
-  editingValue.value = null
+  persist()
+  cancelEdit()
 }
 
 const totalHours = computed(() => {
-  const totalMin = entries.value.reduce((sum, e) => sum + e.value, 0)
+  const totalMin = entries.value
+    .filter(e => e.type === 'input')
+    .reduce((sum, e) => sum + e.value, 0)
   return (totalMin / 60 + (initialHours.value ?? 0)).toFixed(1)
 })
+
+function formatHours(minutes: number): string {
+  return (minutes / 60).toFixed(1) + 'h'
+}
+
+const STACKED_TYPES = ['talking', 'reading'] as const
 
 function weekStartDate(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00')
@@ -262,12 +339,14 @@ function weekStartDate(dateStr: string): string {
 }
 
 const weeklyChartData = computed(() => {
-  const map = new Map<string, number>()
-  for (const e of entries.value) {
-    const week = weekStartDate(e.date)
-    map.set(week, (map.get(week) ?? 0) + e.value)
-  }
-  if (map.size === 0) return { labels: [], weekStarts: [] as string[], datasets: [] }
+  const map = totalsBy(e => weekStartDate(e.date))
+  if (map.size === 0)
+    return {
+      labels: [],
+      weekStarts: [] as string[],
+      weekly: { talking: [] as number[], reading: [] as number[] },
+      datasets: [],
+    }
 
   const weeks = [...map.keys()].sort()
   const firstWeek = weeks[0]!
@@ -284,12 +363,20 @@ const weeklyChartData = computed(() => {
     cursor.setDate(cursor.getDate() + 7)
   }
 
-  const weeklyData = allWeeks.map(w => map.get(w) ?? 0)
+  const weeklyFor = (type: EntryType) => allWeeks.map(w => map.get(w)?.[type] ?? 0)
+  const weeklyData = weeklyFor('input')
   let runningTotal = (initialHours.value ?? 0) * 60
   const priorCumulative: number[] = []
   for (const v of weeklyData) {
     priorCumulative.push(runningTotal)
     runningTotal += v
+  }
+
+  // Talking and reading are shown as running totals through each week
+  const weekly = { talking: weeklyFor('talking'), reading: weeklyFor('reading') }
+  const cumulativeFor = (data: number[]) => {
+    let total = 0
+    return data.map(v => (total += v))
   }
   // Build x-axis labels: show month name on the first week of each month
   const labelledMonths = new Set<string>()
@@ -316,29 +403,36 @@ const weeklyChartData = computed(() => {
   return {
     labels: xLabels,
     weekStarts: allWeeks,
+    weekly,
     datasets: [
       {
         label: 'Cumulative',
         data: priorCumulative,
-        backgroundColor: '#646cff',
+        backgroundColor: INPUT_COLORS.cumulative,
         stack: 'stack',
       },
       {
         label: 'This Week',
         data: weeklyData,
-        backgroundColor: '#83d583',
+        backgroundColor: INPUT_COLORS.thisWeek,
         stack: 'stack',
       },
+      // Talking/reading get their own stack, overlapping the input stack
+      // (grouped: false) and drawn in front of it (lower order draws on top)
+      ...STACKED_TYPES.map(type => ({
+        label: type === 'talking' ? 'Talking' : 'Reading',
+        data: cumulativeFor(weekly[type]),
+        backgroundColor: TYPE_COLORS[type],
+        stack: 'other',
+        grouped: false,
+        order: -1,
+      })),
     ],
   }
 })
 
 const monthlyChartData = computed(() => {
-  const map = new Map<string, number>()
-  for (const e of entries.value) {
-    const month = e.date.slice(0, 7) // "YYYY-MM"
-    map.set(month, (map.get(month) ?? 0) + e.value)
-  }
+  const map = totalsBy(e => e.date.slice(0, 7)) // "YYYY-MM"
   if (map.size === 0) return { labels: [], months: [] as string[], datasets: [] }
 
   const months = [...map.keys()].sort()
@@ -360,7 +454,7 @@ const monthlyChartData = computed(() => {
     }
   }
 
-  const data = allMonths.map(m => map.get(m) ?? 0)
+  const monthlyFor = (type: EntryType) => allMonths.map(m => map.get(m)?.[type] ?? 0)
   const labels = allMonths.map(m => {
     const [y, mo] = m.split('-').map(Number) as [number, number]
     const d = new Date(y, mo - 1)
@@ -373,10 +467,17 @@ const monthlyChartData = computed(() => {
     months: allMonths,
     datasets: [
       {
-        label: 'Monthly Hours',
-        data,
-        backgroundColor: '#d47a5e',
+        label: 'Input',
+        data: monthlyFor('input'),
+        backgroundColor: INPUT_COLORS.cumulative,
+        stack: 'stack',
       },
+      ...STACKED_TYPES.map(type => ({
+        label: type === 'talking' ? 'Talking' : 'Reading',
+        data: monthlyFor(type),
+        backgroundColor: TYPE_COLORS[type],
+        stack: 'stack',
+      })),
     ],
   }
 })
@@ -389,6 +490,8 @@ const monthlyChartOptions = computed(() => ({
   plugins: {
     legend: { display: false },
     tooltip: {
+      mode: 'index' as const,
+      intersect: false,
       callbacks: {
         title: (items: { dataIndex: number }[]) => {
           const idx = items[0]?.dataIndex
@@ -398,16 +501,19 @@ const monthlyChartOptions = computed(() => ({
           const [y, mo] = m.split('-').map(Number) as [number, number]
           return new Date(y, mo - 1).toLocaleString('default', { month: 'long', year: 'numeric' })
         },
-        label: (ctx: { parsed: { y: number | null } }) => {
-          const hours = ((ctx.parsed.y ?? 0) / 60).toFixed(1)
-          return `${hours} hours`
+        label: (ctx: { dataset: { label?: string }; parsed: { y: number | null } }) => {
+          const minutes = ctx.parsed.y ?? 0
+          // Returning '' omits the line from the tooltip
+          if (minutes <= 0) return ''
+          return `${ctx.dataset.label}: ${(minutes / 60).toFixed(1)} hours`
         },
       },
     },
   },
   scales: {
-    x: { ticks: { color: '#888', font: { size: 10 } }, grid: { display: false } },
+    x: { stacked: true, ticks: { color: '#888', font: { size: 10 } }, grid: { display: false } },
     y: {
+      stacked: true,
       ticks: {
         color: '#888',
         stepSize: 300,
@@ -426,8 +532,11 @@ const weeklyChartOptions = computed(() => ({
   plugins: {
     legend: { display: false },
     tooltip: {
-      mode: 'index',
+      mode: 'index' as const,
       intersect: false,
+      // Keep input lines first even though talking/reading are drawn on top
+      itemSort: (a: { datasetIndex: number }, b: { datasetIndex: number }) =>
+        a.datasetIndex - b.datasetIndex,
       callbacks: {
         title: (items: { dataIndex: number }[]) => {
           if (items.length === 0) return ''
@@ -441,25 +550,22 @@ const weeklyChartOptions = computed(() => ({
             d.toLocaleDateString('default', { month: 'long', day: '2-digit', year: 'numeric' })
           )
         },
-        label: (context: any) => {
-          let label = ''
-          const { dataIndex } = context
-          
-          if (dataIndex !== undefined && dataIndex !== null) {
-            const weeklyData = weeklyChartData.value.datasets[1]?.data ?? []
-            const priorCumulative = weeklyChartData.value.datasets[0]?.data ?? []
-            
-            const thisWeekValue = weeklyData[dataIndex] ?? 0
-            const cumulativeValue = priorCumulative[dataIndex] ?? 0
-            
-            if (thisWeekValue > 0) {
-              label += `This Week: ${(thisWeekValue / 60).toFixed(1)}h\n`
-            }
-            if (cumulativeValue > 0) {
-              label += `Cumulative: ${(cumulativeValue / 60).toFixed(1)}h`
-            }
+        label: (ctx: {
+          datasetIndex: number
+          dataIndex: number
+          dataset: { label?: string }
+          parsed: { y: number | null }
+        }) => {
+          const minutes = ctx.parsed.y ?? 0
+          // Returning '' omits the line from the tooltip
+          if (minutes <= 0) return ''
+          let label = `${ctx.dataset.label}: ${formatHours(minutes)}`
+          // Talking/reading bars are running totals; also show this week's amount
+          const type = STACKED_TYPES[ctx.datasetIndex - 2]
+          if (type) {
+            const thisWeek = weeklyChartData.value.weekly[type][ctx.dataIndex] ?? 0
+            if (thisWeek > 0) label += ` (+${formatHours(thisWeek)} this week)`
           }
-          
           return label
         },
       },
@@ -475,13 +581,13 @@ const weeklyChartOptions = computed(() => ({
       stacked: true,
       min: 0,
       max: (() => {
-        const ds = weeklyChartData.value.datasets as { data: number[] }[]
+        const ds = weeklyChartData.value.datasets as { data: number[]; stack: string }[]
         const len = ds[0]?.data.length ?? 0
         let maxStack = 0
         for (let i = 0; i < len; i++) {
-          let sum = 0
-          for (const d of ds) sum += d.data[i] ?? 0
-          if (sum > maxStack) maxStack = sum
+          const sums = new Map<string, number>()
+          for (const d of ds) sums.set(d.stack, (sums.get(d.stack) ?? 0) + (d.data[i] ?? 0))
+          maxStack = Math.max(maxStack, ...sums.values())
         }
         return Math.floor(maxStack / 3000) * 3000 + 3000
       })(),
@@ -497,14 +603,14 @@ const weeklyChartOptions = computed(() => ({
 
 function cancelEdit() {
   editingDate.value = null
-  editingValue.value = null
+  editingValues.value = { input: null, talking: null, reading: null }
 }
 
 function removeEntry(entry: TimeTrackerEntry) {
   const idx = entries.value.indexOf(entry)
   if (idx !== -1) {
     entries.value.splice(idx, 1)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.value))
+    persist()
   }
 }
 
@@ -544,18 +650,56 @@ onMounted(() => {
       <input type="number" v-model.number="minutes" step="1" placeholder="minutes" required />
       <button type="submit">+</button>
     </div>
+    <div class="type-row" role="group" aria-label="Entry type">
+      <button
+        v-for="t in ENTRY_TYPES"
+        :key="t"
+        type="button"
+        class="type-btn"
+        :class="[t, { active: entryType === t }]"
+        :style="{ '--type-color': BUTTON_COLORS[t] }"
+        :aria-pressed="entryType === t"
+        @click="selectType(t)"
+      >
+        {{ t }}
+      </button>
+    </div>
     <input type="text" v-model="note" placeholder="notes" class="note-input" />
   </form>
 
   <div v-if="entries.length" class="chart-container">
-    <div class="heatmap-title">Weekly progress</div>
+    <div class="heatmap-title">
+      Weekly progress
+      <span v-if="hasOtherTypes" class="chart-legend">
+        <!-- Input is drawn in two colors: running total below, this week on top -->
+        <span
+          ><i
+            :style="{
+              background: `linear-gradient(to top, ${INPUT_COLORS.cumulative} 50%, ${INPUT_COLORS.thisWeek} 50%)`,
+            }"
+          ></i
+          >input</span
+        >
+        <span v-for="t in STACKED_TYPES" :key="t"
+          ><i :style="{ backgroundColor: TYPE_COLORS[t] }"></i>{{ t }}</span
+        >
+      </span>
+    </div>
     <div class="chart-wrap">
       <Bar :data="weeklyChartData" :options="weeklyChartOptions" />
     </div>
   </div>
 
   <div v-if="entries.length" class="chart-container">
-    <div class="heatmap-title">Monthly totals</div>
+    <div class="heatmap-title">
+      Monthly totals
+      <span v-if="hasOtherTypes" class="chart-legend">
+        <span><i :style="{ backgroundColor: INPUT_COLORS.cumulative }"></i>input</span>
+        <span v-for="t in STACKED_TYPES" :key="t"
+          ><i :style="{ backgroundColor: TYPE_COLORS[t] }"></i>{{ t }}</span
+        >
+      </span>
+    </div>
     <div class="chart-wrap">
       <Bar :data="monthlyChartData" :options="monthlyChartOptions" />
     </div>
@@ -580,7 +724,7 @@ onMounted(() => {
               backgroundColor: cellColor(cell),
               animationDelay: initialLoad ? cellAnimDelay(mi, wi, ci) + 'ms' : undefined,
             }"
-            @click="tapCell(cell.date, cell.minutes)"
+            @click="tapCell(cell.date)"
           >
             <span class="heatmap-day">{{ cell.day }}</span>
             <span v-if="cell.minutes" class="heatmap-minutes">{{ cell.minutes }}'</span>
@@ -593,16 +737,20 @@ onMounted(() => {
   <div v-if="editingDate" class="modal-overlay" @click.self="cancelEdit">
     <div class="modal">
       <div class="modal-title">Edit total minutes for {{ editingDate }}</div>
-      <input
-        ref="editInput"
-        type="number"
-        inputmode="numeric"
-        class="modal-input"
-        v-model.number="editingValue"
-        placeholder="Minutes"
-        @keydown.enter="commitEdit"
-        @keydown.escape="cancelEdit"
-      />
+      <label v-for="t in ENTRY_TYPES" :key="t" class="modal-field">
+        <span class="modal-label">{{ t }}</span>
+        <input
+          ref="editInputs"
+          :data-type="t"
+          type="number"
+          inputmode="numeric"
+          class="modal-input"
+          v-model.number="editingValues[t]"
+          placeholder="Minutes"
+          @keydown.enter="commitEdit"
+          @keydown.escape="cancelEdit"
+        />
+      </label>
       <div class="modal-buttons">
         <button type="button" @click="cancelEdit">Cancel</button>
         <button type="button" @click="commitEdit">Save</button>
@@ -615,18 +763,23 @@ onMounted(() => {
     <thead>
       <tr>
         <th>Date</th>
-        <th>Min</th>
+        <th v-for="t in ENTRY_TYPES" :key="t">{{ t }}</th>
         <th>Note</th>
         <th></th>
       </tr>
     </thead>
     <tbody>
-      <tr v-for="entry in sortedForTable" :key="entry.date + entry.value">
+      <tr
+        v-for="(entry, i) in sortedForTable"
+        :key="`${entry.date}-${entry.type}-${i}`"
+        class="entry-row-tap"
+        @click="tapCell(entry.date)"
+      >
         <td>{{ entry.date }}</td>
-        <td>{{ entry.value }}</td>
+        <td v-for="t in ENTRY_TYPES" :key="t">{{ entry.type === t ? entry.value : '' }}</td>
         <td class="note-cell">{{ entry.note ?? '' }}</td>
         <td class="delete-cell">
-          <span class="delete-btn" @click="removeEntry(entry)">&times;</span>
+          <span class="delete-btn" @click.stop="removeEntry(entry)">&times;</span>
         </td>
       </tr>
     </tbody>
@@ -708,6 +861,50 @@ h1 {
   background: #1a1a1a;
   color: inherit;
   font-size: 1em;
+}
+
+.type-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.type-btn {
+  flex: 1;
+  padding: 0.4em 0.5em;
+  font-size: 0.85em;
+  border: 1px solid #444;
+  color: #aaa;
+}
+
+.type-btn.active {
+  background: var(--type-color);
+  border-color: var(--type-color);
+  color: #fff;
+}
+
+/* White text is hard to read on yellow */
+.type-btn.active.talking {
+  color: #213547;
+}
+
+.chart-legend {
+  float: right;
+  font-size: 0.75em;
+  font-weight: 500;
+  text-transform: none;
+  color: #888;
+}
+
+.chart-legend span {
+  margin-left: 0.6em;
+}
+
+.chart-legend i {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  margin-right: 0.25em;
+  border-radius: 2px;
 }
 
 .note-input {
@@ -801,8 +998,22 @@ h1 {
   margin-bottom: 0.75rem;
 }
 
+.modal-field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.modal-label {
+  width: 4.5rem;
+  text-align: left;
+  font-size: 0.9em;
+}
+
 .modal-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   box-sizing: border-box;
   padding: 0.5em 0.75em;
   border-radius: 8px;
@@ -811,12 +1022,12 @@ h1 {
   color: inherit;
   font-size: 1.1em;
   text-align: center;
-  margin-bottom: 0.75rem;
 }
 
 .modal-buttons {
   display: flex;
   gap: 0.5rem;
+  margin-top: 0.75rem;
 }
 
 .modal-buttons button {
@@ -853,6 +1064,10 @@ h1 {
 .data-table th {
   vertical-align: top;
   padding: 0.25em 0.25em;
+}
+
+.entry-row-tap {
+  cursor: pointer;
 }
 
 .note-cell {
@@ -923,6 +1138,10 @@ h1 {
   }
   .modal {
     background: #fff;
+  }
+  .type-btn {
+    border-color: #ccc;
+    color: #666;
   }
   .modal-input,
   .initial-hours-input {
