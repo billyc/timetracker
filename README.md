@@ -11,7 +11,9 @@ Now every time you watch a video or get some input, put in the number of minutes
 
 The "Initial Hours" are added to the running total. So if you gave yourself some initial hours before using the app, enter them here.
 
-You can also tap any date on the calendar to edit the total minutes for that day; useful if you are entering data from a different source.
+Below the date picker, choose the type of time you're logging: **input**, **talking**, or **reading**. Your choice is remembered. Talking and reading time is stacked on top of input in the weekly and monthly charts.
+
+You can also tap any date on the calendar, or any row in the data entries table, to edit that day's total minutes for each type. This is useful if you are entering data from a different source.
 
 **Sync**
 
